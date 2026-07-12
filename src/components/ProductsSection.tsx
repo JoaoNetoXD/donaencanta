@@ -107,7 +107,7 @@ const Card: React.FC<{ p: Product; i: number; onBuy: Props["onBuy"] }> = ({ p, i
 };
 
 export const ProductsSection: React.FC<Props> = ({ onBuy }) => (
-  <section id="produtos" className="max-w-6xl mx-auto px-4 py-12">
+  <section id="produtos" className="max-w-6xl mx-auto px-4 py-12 scroll-mt-24">
     <h2 className="text-3xl sm:text-4xl font-extrabold text-center text-brand-charcoal">
       As outras <span className="font-serif italic text-brand-pink-700">paixões</span> das nossas clientes
     </h2>

@@ -13,7 +13,7 @@ const AVATAR_COLORS = [
 ];
 
 export const Reviews: React.FC = () => (
-  <section className="bg-white border-y border-brand-cream-200 py-12">
+  <section id="avaliacoes" className="bg-white border-y border-brand-cream-200 py-12 scroll-mt-24">
     <div className="max-w-6xl mx-auto px-4">
       <h2 className="text-3xl sm:text-4xl font-extrabold text-center text-brand-charcoal">
         Mais de <span className="font-serif italic text-brand-pink-700">9.600 mulheres</span> já se apaixonaram

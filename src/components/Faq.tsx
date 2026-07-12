@@ -32,7 +32,7 @@ export const HowItWorks: React.FC = () => (
 
 /** Selos de garantia + faixa de confiança */
 export const Guarantees: React.FC = () => (
-  <section className="max-w-6xl mx-auto px-4 py-6">
+  <section id="garantia" className="max-w-6xl mx-auto px-4 py-6 scroll-mt-24">
     <div className="rounded-3xl bg-gradient-to-r from-brand-pink-700 via-brand-pink-600 to-brand-pink-700 text-white p-6 sm:p-8 shadow-xl shadow-brand-pink-100">
       <div className="flex flex-col sm:flex-row items-center gap-5 sm:gap-8">
         <div className="shrink-0 w-20 h-20 rounded-full bg-white/15 border-2 border-white/40 grid place-items-center">
@@ -67,7 +67,7 @@ export const Guarantees: React.FC = () => (
 export const Faq: React.FC = () => {
   const [open, setOpen] = useState<number | null>(0);
   return (
-    <section className="max-w-3xl mx-auto px-4 py-12">
+    <section id="duvidas" className="max-w-3xl mx-auto px-4 py-12 scroll-mt-24">
       <h2 className="text-3xl font-extrabold text-center text-brand-charcoal mb-6">
         Dúvidas <span className="font-serif italic text-brand-pink-700">rápidas</span>
       </h2>

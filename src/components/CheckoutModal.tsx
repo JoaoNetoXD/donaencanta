@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { X, Lock, ShieldCheck, Truck, Loader2 } from "lucide-react";
+import { X, Lock, ShieldCheck, Truck, Loader2, Plus } from "lucide-react";
 import { motion } from "motion/react";
+import { ALL_PRODUCTS } from "../data";
 import { Kit, Product } from "../types";
-import { brl, parcela } from "../utils";
+import { brl, parcela, off } from "../utils";
 
 export interface CheckoutState {
   product: Product;
@@ -14,8 +15,48 @@ interface Props {
   onClose: () => void;
 }
 
+/** Mini-cards de cross-sell: outros produtos para a cliente aproveitar */
+const CrossSell: React.FC<{
+  current: Product;
+  compact?: boolean;
+  onPick: (p: Product) => void;
+}> = ({ current, compact, onPick }) => {
+  const others = ALL_PRODUCTS.filter((p) => p.id !== current.id).slice(0, compact ? 2 : 3);
+  return (
+    <div className={compact ? "px-4 py-3 border-t border-brand-cream-200 bg-brand-cream-50" : "mt-4"}>
+      <p className="text-[11px] font-extrabold uppercase tracking-widest text-brand-pink-700 mb-2">
+        💗 Clientes também levaram
+      </p>
+      <div className="space-y-2">
+        {others.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => onPick(p)}
+            className="w-full flex items-center gap-2.5 bg-white rounded-xl border border-brand-cream-200 hover:border-brand-pink-400 hover:shadow-md transition p-2 text-left"
+          >
+            <img src={p.images[0]} alt="" className="w-11 h-11 rounded-lg object-cover shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-extrabold truncate">{p.shortName}</p>
+              <p className="text-[11px]">
+                <span className="line-through text-brand-clay">{brl(p.originalPrice)}</span>{" "}
+                <span className="font-extrabold text-brand-pink-700">{brl(p.price)}</span>{" "}
+                <span className="text-green-700 font-bold">-{off(p.price, p.originalPrice)}%</span>
+              </p>
+            </div>
+            <span className="shrink-0 flex items-center gap-1 bg-brand-pink-100 text-brand-pink-800 text-[10px] font-extrabold px-2.5 py-1.5 rounded-full">
+              <Plus className="w-3 h-3" /> VER OFERTA
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
-  const { product, kit } = checkout;
+  // Estado interno: o upsell pode trocar o produto sem fechar o modal
+  const [current, setCurrent] = useState<CheckoutState>(checkout);
+  const { product, kit } = current;
   const [step, setStep] = useState<"form" | "pay">("form");
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
@@ -27,6 +68,13 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
 
   // Cada kit tem seu link de checkout; sem link ainda → usa o do produto
   const payUrl = kit.checkoutUrl || product.checkoutUrl;
+
+  /** Upsell: troca o produto do checkout mantendo os dados já digitados */
+  const switchTo = (p: Product) => {
+    setCurrent({ product: p, kit: p.kits[0] });
+    setStep("form");
+    setLoadingPay(true);
+  };
 
   /**
    * Corta a área visível do checkout: esconde o cabeçalho/card de produto
@@ -146,8 +194,22 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
               <img src={product.images[0]} alt="" className="w-16 h-16 rounded-xl object-cover" />
               <div className="flex-1">
                 <p className="font-extrabold text-sm leading-snug">{product.shortName}</p>
-                <p className="text-xs text-brand-clay">{kit.label}</p>
-                <p className="text-sm">
+                <div className="mt-0.5 flex flex-wrap gap-1">
+                  {product.kits.map((k) => (
+                    <button
+                      key={k.id}
+                      onClick={() => setCurrent({ product, kit: k })}
+                      className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border transition ${
+                        kit.id === k.id
+                          ? "bg-brand-pink-600 border-brand-pink-600 text-white"
+                          : "border-brand-cream-300 text-brand-clay hover:border-brand-pink-400"
+                      }`}
+                    >
+                      {k.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-sm mt-1">
                   <span className="line-through text-brand-clay text-xs">{brl(product.originalPrice * kit.qty)}</span>{" "}
                   <span className="font-extrabold text-brand-pink-700">{brl(kit.price)}</span>
                 </p>
@@ -216,6 +278,9 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
               <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Dados protegidos</span>
               <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> 7 dias de garantia</span>
             </div>
+
+            {/* Upsell: outros produtos sem sair do checkout */}
+            <CrossSell current={product} onPick={switchTo} />
           </div>
         ) : !payUrl ? (
           <div className="p-8 text-center">
@@ -235,23 +300,28 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
             </button>
           </div>
         ) : (
-          <div className="relative">
-            {loadingPay && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white z-10">
-                <Loader2 className="w-8 h-8 text-brand-pink-600 animate-spin" />
-                <p className="text-sm font-extrabold text-brand-clay">Carregando pagamento seguro...</p>
-              </div>
-            )}
-            <iframe
-              src={payUrl}
-              title="Pagamento"
-              onLoad={(e) => {
-                cropCheckout(e.currentTarget);
-                setLoadingPay(false);
-              }}
-              className="w-full h-[70vh] border-0"
-              allow="payment"
-            />
+          <div>
+            <div className="relative">
+              {loadingPay && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white z-10">
+                  <Loader2 className="w-8 h-8 text-brand-pink-600 animate-spin" />
+                  <p className="text-sm font-extrabold text-brand-clay">Carregando pagamento seguro...</p>
+                </div>
+              )}
+              <iframe
+                key={payUrl}
+                src={payUrl}
+                title="Pagamento"
+                onLoad={(e) => {
+                  cropCheckout(e.currentTarget);
+                  setLoadingPay(false);
+                }}
+                className="w-full h-[70vh] border-0"
+                allow="payment"
+              />
+            </div>
+            {/* Upsell também na tela de pagamento */}
+            <CrossSell current={product} compact onPick={switchTo} />
           </div>
         )}
       </motion.div>

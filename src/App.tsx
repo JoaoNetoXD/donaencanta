@@ -38,6 +38,13 @@ export default function App() {
               </span>
             </span>
           </p>
+          <nav className="hidden md:flex items-center gap-5 text-xs font-extrabold text-brand-clay">
+            <a href="#produtos" className="hover:text-brand-pink-700 transition">Produtos</a>
+            <a href="#avaliacoes" className="hover:text-brand-pink-700 transition">Avaliações</a>
+            <a href="#garantia" className="hover:text-brand-pink-700 transition">Garantia</a>
+            <a href="#duvidas" className="hover:text-brand-pink-700 transition">Dúvidas</a>
+          </nav>
+
           <div className="flex flex-col items-end gap-0.5">
             <div className="flex items-center gap-1 text-xs text-brand-clay">
               <div className="flex text-amber-400">
@@ -56,9 +63,9 @@ export default function App() {
 
       <main>
         <HeroProduct onBuy={buyHero} />
+        <ProductsSection onBuy={buy} />
         <Reviews />
         <HowItWorks />
-        <ProductsSection onBuy={buy} />
         <Guarantees />
         <Faq />
       </main>
