@@ -1,0 +1,6 @@
+{
+  "name": "Maison & Cozinha - Utensílios Premium",
+  "description": "E-commerce premium de utensílios e organização doméstica elegante, projetado para alta conversão.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

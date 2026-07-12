@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.vercel
+
+# Arquivos de trabalho — não vão para o deploy
+*.zip
+FOTOS PRODUTOS/
