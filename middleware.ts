@@ -1,21 +1,27 @@
 /**
- * Vercel Edge Middleware — proxy do checkout externo.
+ * Vercel Edge Middleware — proxy do checkout externo (serverflow.dad / Shark Bot).
  *
- * O checkout (serverflow.dad / Shark Bot) manda X-Frame-Options: SAMEORIGIN,
- * que impede carregá-lo em iframe de outro domínio. Aqui servimos esses
- * caminhos pelo NOSSO domínio (mesma origem) e removemos os headers que
- * bloqueiam o iframe — assim a cliente paga sem sair do site.
+ * Dois problemas resolvidos aqui:
  *
- * IMPORTANTE: enviamos ao checkout apenas uma lista limpa de headers.
- * A Vercel injeta x-forwarded-host/x-vercel-* e o roteador multi-tenant
- * do checkout resolve o site pelo host — com esses headers ele responde
- * {"success":false,"error":"Not Found"}. (Verificado por teste direto.)
+ * 1) X-Frame-Options: SAMEORIGIN — impede o iframe. Removido na volta.
  *
- * Equivalente em produção ao proxy do vite.config.ts (dev) e server.prod.js (Node).
+ * 2) A Vercel RESERVA o caminho /_next e devolve 403 antes do middleware/rewrite.
+ *    O checkout é Next.js e carrega seus chunks de /_next/static/... → 403.
+ *    Solução: no HTML e nos JS, reescrevemos "/_next/" → "/sbx/_next/". O prefixo
+ *    /sbx NÃO é reservado, então o middleware o intercepta e proxia para a origem
+ *    (removendo o /sbx). Como o publicPath do webpack também é reescrito dentro
+ *    do JS, os chunks carregados dinamicamente também apontam para /sbx.
+ *
+ * 3) A Vercel injeta x-forwarded-host/x-vercel-*; o roteador multi-tenant do
+ *    checkout responde "Not Found" com esses headers. Enviamos só uma allowlist.
+ *
+ * Em dev, o proxy é o do vite.config.ts (não precisa do rename /sbx).
  */
-const CHECKOUT_ORIGIN = "https://serverflow.dad";
+const ORIGIN = "https://serverflow.dad";
+const PREFIX = "/sbx";
+const RENAME = "/_next/";
+const RENAMED = PREFIX + "/_next/";
 
-// Headers do cliente repassados ao checkout (allowlist — nada de x-forwarded-*)
 const KEEP_REQUEST_HEADERS = [
   "accept",
   "accept-language",
@@ -27,7 +33,6 @@ const KEEP_REQUEST_HEADERS = [
   "x-requested-with",
 ];
 
-// Cabeçalhos de resposta que impediriam o iframe — removidos na volta.
 const STRIP_RESPONSE_HEADERS = [
   "x-frame-options",
   "content-security-policy",
@@ -35,53 +40,62 @@ const STRIP_RESPONSE_HEADERS = [
 ];
 
 export const config = {
-  // Só o documento do checkout + APIs (precisam de X-Frame-Options removido e
-  // de headers limpos). Os estáticos (/_next, /pwa) vão por rewrite no
-  // vercel.json — a Vercel PULA o middleware em /_next/static, então precisam
-  // ser servidos pela camada de routing, não aqui.
-  matcher: ["/c/:path*", "/api/:path*", "/manifest.json"],
+  matcher: ["/c/:path*", "/sbx/:path*", "/api/:path*", "/pwa/:path*", "/manifest.json"],
 };
+
+/** Content-types cujo corpo reescrevemos ("/_next/" → "/sbx/_next/"). */
+function isRewritable(ct: string): boolean {
+  return /text\/html|javascript|text\/css|application\/json/i.test(ct);
+}
 
 export default async function middleware(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const target = CHECKOUT_ORIGIN + url.pathname + url.search;
+
+  // Caminho real na origem: tira o prefixo /sbx quando presente.
+  let path = url.pathname;
+  if (path === PREFIX) path = "/";
+  else if (path.startsWith(PREFIX + "/")) path = path.slice(PREFIX.length);
+
+  const target = ORIGIN + path + url.search;
 
   const fwd = new Headers();
   for (const h of KEEP_REQUEST_HEADERS) {
     const v = req.headers.get(h);
     if (v) fwd.set(h, v);
   }
-  // Origin/referer coerentes com o host do checkout (APIs Next validam origem)
-  fwd.set("origin", CHECKOUT_ORIGIN);
-  fwd.set("referer", CHECKOUT_ORIGIN + url.pathname);
+  fwd.set("origin", ORIGIN);
+  fwd.set("referer", ORIGIN + path);
 
   const method = req.method.toUpperCase();
   const body = method === "GET" || method === "HEAD" ? undefined : await req.arrayBuffer();
 
   let upstream: Response;
   try {
-    upstream = await fetch(target, {
-      method,
-      headers: fwd,
-      body,
-      redirect: "manual",
-    });
+    upstream = await fetch(target, { method, headers: fwd, body, redirect: "manual" });
   } catch {
-    return new Response("Checkout temporariamente indisponível. Tente novamente.", {
-      status: 502,
-    });
+    return new Response("Checkout temporariamente indisponível. Tente novamente.", { status: 502 });
   }
 
   const headers = new Headers(upstream.headers);
   for (const h of STRIP_RESPONSE_HEADERS) headers.delete(h);
 
-  // Redirects absolutos para o checkout voltam relativos ao nosso domínio,
-  // para a navegação continuar dentro do iframe/site.
+  // Redirects absolutos para a origem viram relativos ao nosso domínio.
   const loc = headers.get("location");
-  if (loc && loc.startsWith(CHECKOUT_ORIGIN)) {
-    headers.set("location", loc.slice(CHECKOUT_ORIGIN.length) || "/");
+  if (loc && loc.startsWith(ORIGIN)) headers.set("location", loc.slice(ORIGIN.length) || "/");
+
+  const ct = headers.get("content-type") || "";
+  if (isRewritable(ct)) {
+    // Reescreve as referências a /_next/ para o prefixo proxiável /sbx/_next/.
+    // split/join = sem re-scan do texto inserido (evita prefixo duplicado).
+    let text = await upstream.text();
+    text = text.split(RENAME).join(RENAMED);
+    // O corpo muda de tamanho e pode vir comprimido — remova esses headers.
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    return new Response(text, { status: upstream.status, statusText: upstream.statusText, headers });
   }
 
+  // Fontes, imagens, etc.: passa direto.
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
