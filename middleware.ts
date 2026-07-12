@@ -1,26 +1,26 @@
 /**
  * Vercel Edge Middleware — proxy do checkout externo (serverflow.dad / Shark Bot).
  *
- * Dois problemas resolvidos aqui:
+ * Três bloqueios resolvidos aqui:
  *
  * 1) X-Frame-Options: SAMEORIGIN — impede o iframe. Removido na volta.
  *
- * 2) A Vercel RESERVA o caminho /_next e devolve 403 antes do middleware/rewrite.
- *    O checkout é Next.js e carrega seus chunks de /_next/static/... → 403.
- *    Solução: no HTML e nos JS, reescrevemos "/_next/" → "/sbx/_next/". O prefixo
- *    /sbx NÃO é reservado, então o middleware o intercepta e proxia para a origem
- *    (removendo o /sbx). Como o publicPath do webpack também é reescrito dentro
- *    do JS, os chunks carregados dinamicamente também apontam para /sbx.
+ * 2) A Vercel RESERVA qualquer caminho que contenha "_next" e devolve 403 antes
+ *    do middleware. O checkout é Next.js e carrega chunks de /_next/static/... →
+ *    403. Solução: reescrevemos "/_next/" → "/cx/" no HTML e nos JS (o prefixo
+ *    /cx não contém "_next", então a Vercel deixa passar e o middleware o
+ *    intercepta). O publicPath do webpack também é reescrito, cobrindo os chunks
+ *    carregados dinamicamente. /cx/... é proxiado de volta para /_next/... na origem.
  *
  * 3) A Vercel injeta x-forwarded-host/x-vercel-*; o roteador multi-tenant do
  *    checkout responde "Not Found" com esses headers. Enviamos só uma allowlist.
  *
- * Em dev, o proxy é o do vite.config.ts (não precisa do rename /sbx).
+ * Em dev, o proxy é o do vite.config.ts (não precisa do rename /cx).
  */
 const ORIGIN = "https://serverflow.dad";
-const PREFIX = "/sbx";
-const RENAME = "/_next/";
-const RENAMED = PREFIX + "/_next/";
+const PREFIX = "/cx"; // prefixo proxiável que substitui /_next (sem conter "_next")
+const NEXT = "/_next/";
+const NEXT_ALIAS = PREFIX + "/"; // "/cx/"
 
 const KEEP_REQUEST_HEADERS = [
   "accept",
@@ -40,10 +40,10 @@ const STRIP_RESPONSE_HEADERS = [
 ];
 
 export const config = {
-  matcher: ["/c/:path*", "/sbx/:path*", "/api/:path*", "/pwa/:path*", "/manifest.json"],
+  matcher: ["/c/:path*", "/cx/:path*", "/api/:path*", "/pwa/:path*", "/manifest.json"],
 };
 
-/** Content-types cujo corpo reescrevemos ("/_next/" → "/sbx/_next/"). */
+/** Content-types cujo corpo reescrevemos ("/_next/" ↔ "/cx/"). */
 function isRewritable(ct: string): boolean {
   return /text\/html|javascript|text\/css|application\/json/i.test(ct);
 }
@@ -51,10 +51,10 @@ function isRewritable(ct: string): boolean {
 export default async function middleware(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
-  // Caminho real na origem: tira o prefixo /sbx quando presente.
+  // Caminho real na origem: /cx/... → /_next/... ; o resto segue igual.
   let path = url.pathname;
-  if (path === PREFIX) path = "/";
-  else if (path.startsWith(PREFIX + "/")) path = path.slice(PREFIX.length);
+  if (path === PREFIX || path === PREFIX + "/") path = NEXT;
+  else if (path.startsWith(PREFIX + "/")) path = NEXT + path.slice(PREFIX.length + 1);
 
   const target = ORIGIN + path + url.search;
 
@@ -85,11 +85,9 @@ export default async function middleware(req: Request): Promise<Response> {
 
   const ct = headers.get("content-type") || "";
   if (isRewritable(ct)) {
-    // Reescreve as referências a /_next/ para o prefixo proxiável /sbx/_next/.
-    // split/join = sem re-scan do texto inserido (evita prefixo duplicado).
+    // Reescreve /_next/ → /cx/ (split/join = sem re-scan do texto inserido).
     let text = await upstream.text();
-    text = text.split(RENAME).join(RENAMED);
-    // O corpo muda de tamanho e pode vir comprimido — remova esses headers.
+    text = text.split(NEXT).join(NEXT_ALIAS);
     headers.delete("content-length");
     headers.delete("content-encoding");
     return new Response(text, { status: upstream.status, statusText: upstream.statusText, headers });
