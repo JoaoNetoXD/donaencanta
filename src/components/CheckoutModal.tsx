@@ -1,9 +1,14 @@
 import React, { useState } from "react";
-import { X, Lock, ShieldCheck, Truck, Loader2, Plus } from "lucide-react";
+import { X, Lock, ShieldCheck, Truck, Plus, ExternalLink, CheckCircle2, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { ALL_PRODUCTS } from "../data";
 import { Kit, Product } from "../types";
 import { brl, parcela, off } from "../utils";
+
+// O checkout da serverflow só funciona no domínio dele (mesma-origem: X-Frame-Options
+// + Cloudflare + Turbopack impedem embutir). Então abrimos numa nova aba, na URL
+// absoluta dele, onde renderiza e paga normalmente.
+const CHECKOUT_BASE = "https://serverflow.dad";
 
 export interface CheckoutState {
   product: Product;
@@ -18,12 +23,11 @@ interface Props {
 /** Mini-cards de cross-sell: outros produtos para a cliente aproveitar */
 const CrossSell: React.FC<{
   current: Product;
-  compact?: boolean;
   onPick: (p: Product) => void;
-}> = ({ current, compact, onPick }) => {
-  const others = ALL_PRODUCTS.filter((p) => p.id !== current.id).slice(0, compact ? 2 : 3);
+}> = ({ current, onPick }) => {
+  const others = ALL_PRODUCTS.filter((p) => p.id !== current.id).slice(0, 3);
   return (
-    <div className={compact ? "px-4 py-3 border-t border-brand-cream-200 bg-brand-cream-50" : "mt-4"}>
+    <div className="mt-5 pt-4 border-t border-brand-cream-200">
       <p className="text-[11px] font-extrabold uppercase tracking-widest text-brand-pink-700 mb-2">
         💗 Clientes também levaram
       </p>
@@ -44,7 +48,7 @@ const CrossSell: React.FC<{
               </p>
             </div>
             <span className="shrink-0 flex items-center gap-1 bg-brand-pink-100 text-brand-pink-800 text-[10px] font-extrabold px-2.5 py-1.5 rounded-full">
-              <Plus className="w-3 h-3" /> VER OFERTA
+              <Plus className="w-3 h-3" /> VER
             </span>
           </button>
         ))}
@@ -54,97 +58,26 @@ const CrossSell: React.FC<{
 };
 
 export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
-  // Estado interno: o upsell pode trocar o produto sem fechar o modal
   const [current, setCurrent] = useState<CheckoutState>(checkout);
   const { product, kit } = current;
-  const [step, setStep] = useState<"form" | "pay">("form");
+  const [step, setStep] = useState<"form" | "opened">("form");
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
   const [cep, setCep] = useState("");
   const [endereco, setEndereco] = useState("");
-  const [loadingPay, setLoadingPay] = useState(true);
 
   const valid = nome.trim().length >= 3 && telefone.replace(/\D/g, "").length >= 10;
+  const payPath = kit.checkoutUrl || product.checkoutUrl;
+  const payUrl = payPath ? CHECKOUT_BASE + payPath : "";
 
-  // Cada kit tem seu link de checkout; sem link ainda → usa o do produto
-  const payUrl = kit.checkoutUrl || product.checkoutUrl;
-
-  /** Upsell: troca o produto do checkout mantendo os dados já digitados */
   const switchTo = (p: Product) => {
     setCurrent({ product: p, kit: p.kits[0] });
     setStep("form");
-    setLoadingPay(true);
   };
 
-  /**
-   * Corta a área visível do checkout: esconde o cabeçalho/card de produto
-   * ("VOCÊ ESTÁ ADQUIRINDO") e o rodapé jurídico, deixando só a seção de
-   * pagamento + total + botão. Possível porque o checkout é servido pelo
-   * nosso domínio (proxy) — iframe same-origin permite mexer no DOM interno.
-   */
-  const cropCheckout = (iframe: HTMLIFrameElement) => {
-    try {
-      const doc = iframe.contentDocument;
-      if (!doc) return;
-      const hide = () => {
-        // Re-consulta o DOM a cada passagem: o checkout é React e re-renderiza,
-        // trocando os nós — refs guardadas viram nó morto e os ajustes somem.
-
-        // 1) Cabeçalho "VOCÊ ESTÁ ADQUIRINDO" (card do produto)
-        const leaf = Array.from(doc.querySelectorAll("p, h1, h2, h3, span, div")).find(
-          (el) => el.children.length === 0 && /VOCÊ ESTÁ ADQUIRINDO/i.test(el.textContent || "")
-        );
-        const card = leaf?.closest<HTMLElement>(".rounded-2xl");
-        if (card && card.style.display !== "none") {
-          card.style.display = "none";
-          const container = card.parentElement;
-          if (container) container.style.paddingTop = "12px";
-          doc.documentElement.scrollTop = 0;
-        }
-
-        // 2) Rodapé jurídico ("...intermediadora do pagamento" + "Denunciar conteúdo")
-        const disc = Array.from(doc.querySelectorAll("p")).find((el) =>
-          /intermediadora do pagamento/i.test(el.textContent || "")
-        );
-        const footer =
-          disc?.closest<HTMLElement>(".border-t") ?? disc?.parentElement ?? null;
-        if (footer) footer.style.display = "none";
-
-        // 3) Zera as folgas do checkout (min-h-screen força altura de tela cheia,
-        //    pb-32 = 128px de espaço morto no fim)
-        doc.querySelectorAll<HTMLElement>(".min-h-screen").forEach((el) =>
-          el.style.setProperty("min-height", "0", "important")
-        );
-        doc.querySelectorAll<HTMLElement>('[class*="pb-32"]').forEach((el) =>
-          el.style.setProperty("padding-bottom", "16px", "important")
-        );
-
-        // 4) Corta o iframe na base do último elemento visível de verdade
-        //    (imune a qualquer folga/rodapé remanescente)
-        const bodyTop = doc.body.getBoundingClientRect().top;
-        let bottom = 0;
-        doc.querySelectorAll<HTMLElement>(".min-h-screen *").forEach((el) => {
-          if (footer && footer.contains(el)) return;
-          const r = el.getBoundingClientRect();
-          if (r.height > 0 && r.width > 0) bottom = Math.max(bottom, r.bottom - bodyTop);
-        });
-        const h = Math.ceil(bottom) + 16;
-        if (h > 32) iframe.style.height = h + "px";
-      };
-      hide();
-      // Checkout é um app React: re-renderiza e recriaria o card — re-esconde sempre
-      const observer = new MutationObserver(hide);
-      observer.observe(doc.body, { childList: true, subtree: true });
-      // Re-medições temporizadas: garantem que a altura converge após o layout
-      // assentar (o observer sozinho pode medir antes do reflow terminar).
-      [80, 200, 450, 900, 1600].forEach((ms) => setTimeout(hide, ms));
-    } catch {
-      /* se algo mudar no checkout, mostra a página inteira em vez de quebrar */
-    }
-  };
-
-  const goToPay = () => {
-    // Guarda o lead localmente (nome, contato, endereço + item escolhido)
+  const openCheckout = () => {
+    if (!payUrl) return;
+    // Salva o lead antes de mandar pro pagamento
     try {
       const leads = JSON.parse(localStorage.getItem("leads") ?? "[]");
       leads.push({
@@ -159,9 +92,11 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
       });
       localStorage.setItem("leads", JSON.stringify(leads));
     } catch {
-      /* localStorage indisponível — segue para o pagamento mesmo assim */
+      /* localStorage indisponível — segue mesmo assim */
     }
-    setStep("pay");
+    // Abre o checkout em nova aba (gesto do clique preserva o popup)
+    window.open(payUrl, "_blank", "noopener");
+    setStep("opened");
   };
 
   return (
@@ -172,24 +107,21 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 60, opacity: 0 }}
         transition={{ type: "spring", damping: 26, stiffness: 300 }}
-        className={`relative w-full bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[94vh] overflow-y-auto ${
-          step === "pay" ? "sm:max-w-lg" : "sm:max-w-md"
-        }`}
+        className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[94vh] overflow-y-auto"
       >
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-brand-cream-200 px-4 py-3 flex items-center justify-between z-10">
           <p className="font-extrabold text-sm flex items-center gap-1.5">
-            <Lock className="w-4 h-4 text-brand-pink-600" />
-            {step === "form" ? "Checkout Seguro" : "Pagamento Seguro"}
+            <Lock className="w-4 h-4 text-brand-pink-600" /> Checkout Seguro
           </p>
           <button onClick={onClose} aria-label="Fechar" className="p-1 rounded-full hover:bg-brand-cream-100">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {step === "form" ? (
+        {step === "form" && payUrl ? (
           <div className="p-4">
-            {/* Resumo */}
+            {/* Resumo + troca de kit */}
             <div className="flex items-center gap-3 bg-brand-cream-50 rounded-2xl border border-brand-cream-200 p-3">
               <img src={product.images[0]} alt="" className="w-16 h-16 rounded-xl object-cover" />
               <div className="flex-1">
@@ -219,7 +151,7 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
               <Truck className="w-3.5 h-3.5" /> Frete GRÁTIS incluído
             </p>
 
-            {/* Só o essencial */}
+            {/* Dados */}
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs font-extrabold text-brand-charcoal">Seu nome *</label>
@@ -265,24 +197,49 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
 
             <button
               disabled={!valid}
-              onClick={goToPay}
-              className="mt-4 w-full bg-gradient-to-r from-brand-pink-600 to-brand-pink-700 hover:from-brand-pink-700 hover:to-brand-pink-800 disabled:opacity-40 disabled:cursor-not-allowed transition text-white font-extrabold py-4 rounded-2xl text-base shadow-lg shadow-brand-pink-200"
+              onClick={openCheckout}
+              className="mt-4 w-full bg-gradient-to-r from-brand-pink-600 to-brand-pink-700 hover:from-brand-pink-700 hover:to-brand-pink-800 disabled:opacity-40 disabled:cursor-not-allowed transition text-white font-extrabold py-4 rounded-2xl text-base shadow-lg shadow-brand-pink-200 flex items-center justify-center gap-2"
             >
-              IR PARA O PAGAMENTO — {brl(kit.price)}
+              PAGAR AGORA — {brl(kit.price)} <ExternalLink className="w-4 h-4" />
             </button>
             <p className="mt-2 text-center text-[11px] text-brand-clay">
-              ou 3x de {parcela(kit.price)} sem juros no cartão
+              Pix na hora ou 3x de {parcela(kit.price)} sem juros
             </p>
 
             <div className="mt-3 flex items-center justify-center gap-3 text-[10px] text-brand-clay">
-              <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Dados protegidos</span>
+              <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Ambiente seguro</span>
               <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> 7 dias de garantia</span>
             </div>
 
-            {/* Upsell: outros produtos sem sair do checkout */}
             <CrossSell current={product} onPick={switchTo} />
           </div>
-        ) : !payUrl ? (
+        ) : step === "opened" ? (
+          <div className="p-6 text-center">
+            <div className="mx-auto w-14 h-14 rounded-full bg-green-100 grid place-items-center">
+              <CheckCircle2 className="w-8 h-8 text-green-600" />
+            </div>
+            <h3 className="mt-3 font-extrabold text-lg">Pagamento aberto em nova aba 🔒</h3>
+            <p className="mt-1 text-sm text-brand-clay">
+              Abrimos o pagamento seguro numa aba nova. Finalize seu Pix ou cartão por lá — seu
+              pedido de <b>{product.shortName}</b> ({kit.label}) fica reservado por 15 minutos.
+            </p>
+
+            <a
+              href={payUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 w-full inline-flex items-center justify-center gap-2 bg-gradient-to-r from-brand-pink-600 to-brand-pink-700 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-brand-pink-200"
+            >
+              <ExternalLink className="w-4 h-4" /> Não abriu? Clique para pagar
+            </a>
+            <p className="mt-2 text-[11px] text-brand-clay">
+              {brl(kit.price)} • frete grátis • garantia de 7 dias
+            </p>
+
+            <CrossSell current={product} onPick={switchTo} />
+          </div>
+        ) : (
+          // Produto sem link de checkout (fallback)
           <div className="p-8 text-center">
             <div className="mx-auto w-14 h-14 rounded-full bg-brand-pink-100 grid place-items-center">
               <Loader2 className="w-7 h-7 text-brand-pink-600" />
@@ -298,30 +255,6 @@ export const CheckoutModal: React.FC<Props> = ({ checkout, onClose }) => {
             >
               Ver outras ofertas
             </button>
-          </div>
-        ) : (
-          <div>
-            <div className="relative">
-              {loadingPay && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white z-10">
-                  <Loader2 className="w-8 h-8 text-brand-pink-600 animate-spin" />
-                  <p className="text-sm font-extrabold text-brand-clay">Carregando pagamento seguro...</p>
-                </div>
-              )}
-              <iframe
-                key={payUrl}
-                src={payUrl}
-                title="Pagamento"
-                onLoad={(e) => {
-                  cropCheckout(e.currentTarget);
-                  setLoadingPay(false);
-                }}
-                className="w-full h-[70vh] border-0"
-                allow="payment"
-              />
-            </div>
-            {/* Upsell também na tela de pagamento */}
-            <CrossSell current={product} compact onPick={switchTo} />
           </div>
         )}
       </motion.div>
