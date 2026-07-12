@@ -35,9 +35,11 @@ const STRIP_RESPONSE_HEADERS = [
 ];
 
 export const config = {
-  // Só os caminhos que pertencem ao checkout. O site (/, /assets, /fotos)
-  // não é interceptado.
-  matcher: ["/c/:path*", "/_next/:path*", "/pwa/:path*", "/api/:path*", "/manifest.json"],
+  // Só o documento do checkout + APIs (precisam de X-Frame-Options removido e
+  // de headers limpos). Os estáticos (/_next, /pwa) vão por rewrite no
+  // vercel.json — a Vercel PULA o middleware em /_next/static, então precisam
+  // ser servidos pela camada de routing, não aqui.
+  matcher: ["/c/:path*", "/api/:path*", "/manifest.json"],
 };
 
 export default async function middleware(req: Request): Promise<Response> {
